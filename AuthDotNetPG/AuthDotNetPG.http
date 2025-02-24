@@ -1,0 +1,6 @@
+@AuthDotNetPG_HostAddress = http://localhost:5010
+
+GET {{AuthDotNetPG_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
