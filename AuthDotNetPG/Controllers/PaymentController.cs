@@ -88,7 +88,7 @@ public async Task<IActionResult> ChargeCard([FromBody] ChargeCreditCardDto.Order
         controller.Execute();
         var response = controller.GetApiResponse();
 
-        if (response != null && response.messages.resultCode == messageTypeEnum.Ok)
+        if (response != null && response.transactionResponse.responseCode=="1" && response.messages.resultCode == messageTypeEnum.Ok)
         {
             // Save transaction first
             var transaction = await SaveTransactionAsync(response, savedOrder.Id, order);
@@ -103,7 +103,12 @@ public async Task<IActionResult> ChargeCard([FromBody] ChargeCreditCardDto.Order
                 transaction.TransactionId,
                 Status = "Success",
                 AuthCode = response.transactionResponse.authCode,
-                ResponseCode = response.transactionResponse.responseCode
+                ResponseCode = response.transactionResponse.responseCode,
+                Messages = response.transactionResponse.messages.Select(m => new
+                {
+                    Code = m.code,
+                    Description = m.description
+                }).ToArray()
             });
         }
         else
@@ -111,6 +116,49 @@ public async Task<IActionResult> ChargeCard([FromBody] ChargeCreditCardDto.Order
             // Update order status if transaction fails
             savedOrder.OrderStatus = "Failed";
             await _context.SaveChangesAsync();
+
+                    // error if card number is wrong
+
+                    foreach (var error in response.transactionResponse.errors)
+                    {
+                        if (error.errorCode == "6") // Error code 6 = invalid card number
+                        {
+                            return BadRequest(new
+                            {
+                                Message = "Invalid card number. Please check and try again."
+                            });
+                        }
+                        else
+                        {
+                            return BadRequest(new
+                            {
+                                Message = $"Transaction error: {error.errorText}"
+                            });
+                        }
+                    }
+
+                    //error if cvv is wrong
+
+                    var cvvStatus = response.transactionResponse.cvvResultCode;
+
+                    if (cvvStatus != "M")
+                    {
+                        if (cvvStatus == "N")
+                        {
+                            return BadRequest(new
+                            {
+                                Status = "Failed",
+                                Message = "The CVV code provided is invalid"
+                            });
+                        }else if(cvvStatus == "P")
+                        {
+                            return BadRequest(new
+                            {
+                                Status = "Failed",
+                                Message = "The CVV code provided is not processed"
+                            });
+                        }
+                    }
 
             return BadRequest(new
             {
@@ -228,7 +276,7 @@ public async Task<IActionResult> ChargeCard([FromBody] ChargeCreditCardDto.Order
             _context.Transactions.Add(transaction);
             await _context.SaveChangesAsync();
 
-            // ✅ Update order with the transaction's ID
+            //  Update order with the transaction's ID
             var savedOrder = await _context.Orders.FindAsync(orderId);
             savedOrder.TransactionId = transaction.Id;
             await _context.SaveChangesAsync();
